@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Play Connect Four against living neurons</title>
+<style>
+  :root {
+    --paper: #EEF2F8; --surface: #FFFFFF; --ink: #13203B; --muted: #5B6680; --line: #CBD3E1;
+    --board: #1F4FB8; --board-edge: #173E93; --hole: #EEF2F8;
+    --red: #D8342C; --yellow: #E8B21C; --spike: #D8342C;
+    --g: clamp(6px, 1.3vw, 12px); --pad: clamp(10px, 2vw, 20px);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0D1530; --surface: #16204A; --ink: #E8EDF7; --muted: #A3AECB; --line: #2B3870;
+      --board: #2A5FD6; --board-edge: #1E49AB; --hole: #0D1530;
+      --red: #F0554C; --yellow: #F5C842; --spike: #F0554C; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0D1530; --surface: #16204A; --ink: #E8EDF7; --muted: #A3AECB; --line: #2B3870;
+    --board: #2A5FD6; --board-edge: #1E49AB; --hole: #0D1530;
+    --red: #F0554C; --yellow: #F5C842; --spike: #F0554C; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); min-height: 100%; }
+  body {
+    font-family: "Segoe UI Variable Text", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    font-size: 18px; line-height: 1.45; font-variant-numeric: tabular-nums;
+  }
+  main {
+    max-width: 1180px; margin: 0 auto; padding: 24px 24px 32px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 40px; align-items: start;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  h1 {
+    font-family: "Segoe UI Variable Display", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(28px, 3.6vw, 42px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 6px;
+  }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .sim { display: inline-block; font-size: 14px; padding: 2px 10px; border-radius: 999px; border: 1.5px solid var(--line); margin-left: 6px; }
+
+  .play { width: min(100%, 680px, (100vh - 330px) * 1.05); }
+  .spikes { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0 var(--g); padding: 0 var(--pad); height: 100px; align-items: end; }
+  .bar { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+  .bar i {
+    display: block; width: 46%; border-radius: 6px 6px 2px 2px; background: var(--spike); opacity: .35;
+    height: 0; transition: height .5s ease, opacity .3s;
+  }
+  .bar b { font-size: 14px; font-weight: 600; color: var(--muted); height: 22px; }
+  .bar.chosen i { opacity: 1; }
+  .bar.chosen b { color: var(--ink); }
+  .thinking .bar i { animation: flicker .5s ease-in-out infinite alternate; }
+  .thinking .bar:nth-child(2n) i { animation-delay: .18s; }
+  .thinking .bar:nth-child(3n) i { animation-delay: .33s; }
+  @keyframes flicker { from { height: 8%; opacity: .25; } to { height: 42%; opacity: .6; } }
+
+  .board {
+    position: relative; margin-top: 8px; background: var(--board); border-radius: 22px;
+    padding: var(--pad); box-shadow: inset 0 -6px 0 var(--board-edge);
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: var(--g);
+  }
+  .col {
+    all: unset; cursor: pointer; display: flex; flex-direction: column; gap: var(--g);
+    border-radius: 14px;
+  }
+  .col:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2px; }
+  .col[disabled] { cursor: default; }
+  .col:not([disabled]):hover .preview { opacity: .45; }
+  .cell { position: relative; aspect-ratio: 1; border-radius: 50%; background: var(--hole); overflow: hidden; }
+  .disc { position: absolute; inset: 0; border-radius: 50%; }
+  .disc.human { background: var(--yellow); box-shadow: inset 0 -4px 0 rgba(0,0,0,.15); }
+  .disc.neurons { background: var(--red); box-shadow: inset 0 -4px 0 rgba(0,0,0,.18); }
+  .disc.win { outline: 4px solid var(--ink); outline-offset: -8px; }
+  .preview { position: absolute; inset: 0; border-radius: 50%; background: var(--yellow); opacity: 0; transition: opacity .15s; }
+  .cell.dropping { overflow: visible; }
+  .disc.drop { animation: drop .42s cubic-bezier(.45, 0, .8, .4) both; z-index: 2; }
+  @keyframes drop { from { transform: translateY(calc(var(--fall) * -1 * (100% + var(--g)))); } to { transform: none; } }
+  .labels { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0 var(--g); padding: 6px var(--pad) 0; text-align: center; color: var(--muted); font-size: 15px; }
+
+  aside { display: flex; flex-direction: column; gap: 22px; }
+  #status { font-size: 26px; font-weight: 650; line-height: 1.25; min-height: 2.6em; }
+  #detail { color: var(--muted); font-size: 16px; margin-top: -12px; min-height: 2.9em; }
+  .score { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--surface); border-radius: 16px; padding: 14px 8px; text-align: center; }
+  .score strong { display: block; font-size: 32px; line-height: 1.1; }
+  .score span { font-size: 14px; color: var(--muted); }
+  .who { display: flex; gap: 18px; font-size: 15px; color: var(--muted); }
+  .who span::before { content: ""; display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 6px; vertical-align: -2px; background: var(--c); }
+  .buttons { display: flex; flex-direction: column; gap: 10px; }
+  button.action {
+    font: inherit; font-size: 16px; color: var(--ink); background: var(--surface);
+    border: 1.5px solid var(--line); border-radius: 999px; padding: 10px 18px; cursor: pointer; text-align: center;
+  }
+  button.action.primary { background: var(--board); border-color: var(--board); color: #fff; }
+  button.action:hover { border-color: var(--board); }
+  button.action:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
+  button.action[disabled] { opacity: .5; cursor: default; }
+  .theme { align-self: flex-start; font-size: 14px; padding: 6px 14px; }
+  @media (prefers-reduced-motion: reduce) {
+    .disc.drop, .thinking .bar i { animation: none; }
+    .bar i { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Play Connect Four against living neurons</h1>
+    <p class="sub">The bars show how strongly each column’s electrodes fired. The neurons play the column that fired most.<span id="sim" class="sim" hidden>Simulator</span></p>
+    <div class="play">
+      <div class="spikes" id="spikes" aria-hidden="true"></div>
+      <div class="board" id="board"></div>
+      <div class="labels" aria-hidden="true"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div>
+    </div>
+  </div>
+
+  <aside>
+    <div id="status" role="status" aria-live="polite">Connecting…</div>
+    <div id="detail"></div>
+    <div class="who">
+      <span style="--c: var(--yellow)">You</span>
+      <span style="--c: var(--red)">Neurons</span>
+    </div>
+    <div class="score">
+      <div><strong id="sHuman">0</strong><span>You</span></div>
+      <div><strong id="sNeurons">0</strong><span>Neurons</span></div>
+      <div><strong id="sDraw">0</strong><span>Draws</span></div>
+    </div>
+    <div class="buttons">
+      <button class="action primary" id="newYou" type="button">New game, you start</button>
+      <button class="action" id="newThem" type="button">New game, neurons start</button>
+    </div>
+    <button class="action theme" id="theme" type="button">Light / dark</button>
+  </aside>
+</main>
+
+<script>
+const boardEl = document.getElementById("board");
+const spikesEl = document.getElementById("spikes");
+const statusEl = document.getElementById("status");
+const detailEl = document.getElementById("detail");
+let busy = false, current = null;
+
+// Build the columns and spike bars once
+for (let c = 0; c < 7; c++) {
+  const col = document.createElement("button");
+  col.className = "col"; col.type = "button"; col.dataset.col = c;
+  col.setAttribute("aria-label", `Drop in column ${c + 1}`);
+  for (let r = 5; r >= 0; r--) {
+    const cell = document.createElement("div");
+    cell.className = "cell"; cell.dataset.row = r;
+    if (r === 5) { const p = document.createElement("div"); p.className = "preview"; cell.appendChild(p); }
+    col.appendChild(cell);
+  }
+  col.addEventListener("click", () => humanMove(c));
+  boardEl.appendChild(col);
+  const bar = document.createElement("div");
+  bar.className = "bar"; bar.innerHTML = "<b></b><i></i>";
+  spikesEl.appendChild(bar);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+function findWin(grid) {
+  const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  for (let r = 0; r < 6; r++) for (let c = 0; c < 7; c++) {
+    const p = grid[r][c]; if (!p) continue;
+    for (const [dr, dc] of dirs) {
+      const cells = [[r, c]];
+      for (let k = 1; k < 4; k++) {
+        const rr = r + dr * k, cc = c + dc * k;
+        if (rr < 0 || rr > 5 || cc < 0 || cc > 6 || grid[rr][cc] !== p) break;
+        cells.push([rr, cc]);
+      }
+      if (cells.length === 4) return cells;
+    }
+  }
+  return [];
+}
+
+function render(s, animate = false) {
+  current = s;
+  const win = s.over && s.over !== "draw" ? findWin(s.grid) : [];
+  const isWin = (r, c) => win.some(([wr, wc]) => wr === r && wc === c);
+  boardEl.querySelectorAll(".col").forEach(colEl => {
+    const c = +colEl.dataset.col;
+    colEl.disabled = busy || !!s.over || s.turn !== "human" || !s.legal.includes(c);
+    colEl.querySelectorAll(".cell").forEach(cell => {
+      const r = +cell.dataset.row, p = s.grid[r][c];
+      cell.querySelector(".disc")?.remove();
+      cell.classList.remove("dropping");
+      const preview = cell.querySelector(".preview");
+      if (preview) preview.style.display = p ? "none" : "";
+      if (!p) return;
+      const d = document.createElement("div");
+      d.className = "disc " + (p === 1 ? "human" : "neurons") + (isWin(r, c) ? " win" : "");
+      if (animate && s.last && s.last[0] === r && s.last[1] === c) {
+        d.classList.add("drop"); d.style.setProperty("--fall", 6 - r); cell.classList.add("dropping");
+      }
+      cell.appendChild(d);
+    });
+  });
+  document.getElementById("sHuman").textContent = s.score.human;
+  document.getElementById("sNeurons").textContent = s.score.neurons;
+  document.getElementById("sDraw").textContent = s.score.draw;
+  document.getElementById("sim").hidden = !s.simulator;
+  if (s.over === "human") say("You beat the neurons.", "Start a new game to give them another go.");
+  else if (s.over === "neurons") say("The neurons win.", "You were just beaten by a dish of brain cells.");
+  else if (s.over === "draw") say("It’s a draw.", "The board is full.");
+  else if (s.turn === "human" && !busy) say("Your move.", "Click a column, or press 1 to 7.");
+}
+
+function say(main, sub = "") { statusEl.textContent = main; detailEl.textContent = sub; }
+
+function showSpikes(counts, chosen) {
+  spikesEl.classList.remove("thinking");
+  const max = Math.max(1, ...counts);
+  [...spikesEl.children].forEach((bar, c) => {
+    bar.classList.toggle("chosen", c === chosen);
+    bar.querySelector("i").style.height = (counts[c] / max * 80 + 2) + "%";
+    bar.querySelector("b").textContent = counts[c];
+  });
+}
+
+function clearSpikes() {
+  [...spikesEl.children].forEach(bar => {
+    bar.classList.remove("chosen");
+    bar.querySelector("i").style.height = "0";
+    bar.querySelector("b").textContent = "";
+  });
+}
+
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+function setBusy(b) {
+  busy = b;
+  document.getElementById("newYou").disabled = b;
+  document.getElementById("newThem").disabled = b;
+}
+
+async function neuronsTurn() {
+  setBusy(true); render(current);
+  say("The neurons are thinking…", "Stimulating the electrodes and reading their response.");
+  spikesEl.classList.add("thinking");
+  let s;
+  try { s = await api("/neurons", {}); }
+  catch { s = { ...current, error: "Lost contact with the server. Is serve.py still running?" }; }
+  if (s.error) {
+    spikesEl.classList.remove("thinking"); setBusy(false); render(current);
+    say("Something went wrong.", s.error);
+    return;
+  }
+  showSpikes(s.counts, s.chosen);
+  say(`The neurons chose column ${s.chosen + 1}.`, `Column ${s.chosen + 1} fired ${s.counts[s.chosen]} spikes.`);
+  await wait(900);
+  setBusy(false);
+  render(s, true);
+}
+
+async function humanMove(c) {
+  if (busy || !current || current.over || current.turn !== "human") return;
+  setBusy(true);
+  const s = await api("/human", { col: c });
+  setBusy(false);
+  if (s.error) { render(s); say("Try another column.", s.error); return; }
+  clearSpikes();
+  render(s, true);
+  if (!s.over && s.turn === "neurons") { await wait(450); neuronsTurn(); }
+}
+
+async function newGame(neuronsFirst) {
+  if (busy) return;
+  clearSpikes();
+  const s = await api("/new", { neurons_first: neuronsFirst });
+  render(s);
+  if (neuronsFirst) neuronsTurn();
+}
+
+document.getElementById("newYou").addEventListener("click", () => newGame(false));
+document.getElementById("newThem").addEventListener("click", () => newGame(true));
+document.addEventListener("keydown", e => { if (e.key >= "1" && e.key <= "7") humanMove(+e.key - 1); });
+document.getElementById("theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+});
+
+api("/state").then(s => { render(s); if (!s.over && s.turn === "neurons") neuronsTurn(); })
+  .catch(() => say("Can’t reach the game.", "Start it from the terminal with: python serve.py"));
+</script>
+</body>
+</html>

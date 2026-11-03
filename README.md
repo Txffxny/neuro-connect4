@@ -10,6 +10,8 @@ chance.
 - `experiment.py` – runs N games and logs each neuron move to `results/*.csv`
 - `plot.py` – turns results into `results/summary.png`
 - `play.py` – terminal demo, human vs neurons
+- `serve.py` + `board.html` – browser demo: run `python serve.py` and the board opens at http://127.0.0.1:8765
+- `dashboard.html` – open in a browser and load your results CSVs
 - `.env` – speeds up the simulator; remove the line on the real device
 
 ## Setup (VS Code)
